@@ -1,0 +1,117 @@
+---
+title: "Как увеличить шансы на успех в сборе средств"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+
+# загрузка данных, предобработка 
+
+library(readr)
+kickstarter = read_csv("~/shared/minor2_2020/1-Intro/hw2/kickstarter.csv")
+
+library(rpart)
+library(rpart.plot)
+
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(lubridate)
+library(rsample)
+
+kickstarter$deadline = ymd(kickstarter$deadline)
+
+kickstarter = kickstarter %>% mutate_if(is.character, as.factor)
+kickstarter$name = as.character(kickstarter$name)
+
+# загрузим датасет с информацией о целевой сумме в местной валюте и в usd
+Goal = read_csv("~/shared/minor2_2020/1-Intro/hw2/usd_goals.csv")
+
+# соединим датасеты по id
+kickstarter = full_join(kickstarter, Goal, by = "id") 
+
+# Goal нам уже не нужно, удалим из Environment
+rm(Goal)
+
+# удалим колонки с целевой суммой в местной валюте и поменяем название колонки с валютой в usd
+kickstarter = kickstarter %>% select(-goal.x, -goal.y)
+kickstarter = kickstarter %>% rename(Goal = "usd_goal_real")
+kickstarter = kickstarter %>% select(-id, -currency)
+
+# посмотрим как долго продолжался сбор средств на проект
+kickstarter$launched = as.character(kickstarter$launched)
+kickstarter$launched = str_replace(kickstarter$launched, " [0-9]+:[0-9]+:[0-9]+", "")
+kickstarter$launched = str_remove_all(kickstarter$launched, "-")
+kickstarter$launched = as.numeric(kickstarter$launched)
+kickstarter$launched = ymd(kickstarter$launched)
+kickstarter = kickstarter %>% mutate(Period = (deadline - launched)/ddays(1))
+
+# создадим колонку с информацией о длине названия
+kickstarter = mutate(kickstarter, Number_name = str_length(kickstarter$name))
+
+# разделим датасет на тестовую и обучающую выборки
+set.seed(888)
+train = kickstarter %>% sample_frac(0.8)
+
+test = anti_join(kickstarter, train)
+```
+
+Column {data-width=550}
+-----------------------------------------------------------------------
+
+### Что выбрать при создании проекта
+
+```{r}
+# самый важный график
+
+model1 = rpart(state ~ main_category + country + Goal + Period + Number_name, data = train)
+rpart.plot(model1, digits = -3, type = 5)
+```
+
+Column {data-width=450}
+-----------------------------------------------------------------------
+
+### Успешность проектов на сайте
+
+```{r}
+suc = kickstarter %>% filter(state == "successful") %>% count()
+fail = kickstarter %>% filter(state == "failed") %>% count()
+vB = suc/(suc + fail)*100 
+vB = vB %>% round(digits = 1)
+vB = as.character(vB) %>% str_c("%")
+valueBox(vB)
+```
+
+### Какую главную категорию кампании стоит выбрать
+
+```{r}
+# график или таблица
+selected = c("Art", "Comics", "Dance", "Design", "Games", "Music", "Theater")
+ggplot() +
+  geom_bar(data = kickstarter, aes(x = main_category, fill = state), position = "fill", alpha = 0.5) +
+  coord_flip() +
+  ggtitle("Доля успешных проектов по разным категориям") +
+  ylab("Доля") +
+  xlab("Главные категории") +
+  scale_fill_discrete(name = "Успешность проекта", labels = c("Неуспешный", "Успешный")) +
+  geom_bar(data = kickstarter %>% filter(main_category == selected), aes(x = main_category, fill = state), position = "fill") +
+  coord_flip() +
+  ggtitle("Доля успешных проектов по разным категориям") +
+  ylab("Доля") +
+  xlab("Главные категории") +
+  scale_fill_discrete(name = "Успешность проекта", labels = c("Неуспешный", "Успешный"))
+
+```
+
+
+### Вероятность успеха при соблюдении правил
+
+```{r}
+# по дереву мы видим, что минимальная вероятность успеха 56,6% (0.56)
+valueBox(">56.6%")
+```
+
